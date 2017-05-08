@@ -1,0 +1,474 @@
+---
+title: "Preproceso_v01"
+author: "JOM"
+date: "9/5/2017"
+output: 
+    html_document:
+      fig_width: 11
+      fig_height: 10
+      fig_caption: true
+      toc: true
+      toc_float: true      
+---
+
+```{r setup, include=FALSE, echo=FALSE, message=FALSE}
+# require(devtools)
+# devtools::install_github("hafen/trelliscopejs")
+# devtools::install_github("vqv/ggbiplot")
+# library(trelliscopejs)
+# library(ggbiplot)
+#
+cargar=function (x) {
+  if (! require(x,character.only = TRUE)) {
+    install.packages(x,repos="http://cran.rstudio.com/")
+    require(x,character.only = TRUE)
+  }
+}
+#
+pkgs=c('dplyr','ggplot2','plyr','zoo','stringr','utils',
+       'parallel','xtable','readr','plotly','htmlwidgets',
+       'tibble','trelliscopejs','rbokeh','dplyr','ggiraph',
+       'xtable','SimilarityMeasures','DBI','htmlwidgets',
+       'reshape2','scales','rbokeh','formattable',
+       'svglite','lubridate','grid','gridExtra',
+       'cowplot')
+lapply(pkgs, cargar)
+#
+```
+
+## Lectura de datos físicos
+
+En este bloque cargaremos los datos de los sensores en diferentes salas marcadas como de
+interes. Estas salas son: 
+
+* Comedor
+* Habitación 1
+* Habitación 2
+* Sala Central 
+* Sala de Estar 
+
+Los datos podrían ser proporcionados por un servicio REST
+<https://es.wikipedia.org/wiki/Transferencia_de_Estado_Representacional>
+o bien ser gestionados offline como csv. En este caso se hace con 
+tecnología CSV
+
+Se crea una lista en el objeto d que contiene cada fichero csv en cada 
+dependencia, así d[["0-Comedor.csv"]] contendrá los datos de los sensores
+para esa dependencia en todo el período de nuestreo.
+
+```{r lectura,warning=FALSE}
+files = list.files(path='~/git/Salas/', pattern = '^[0-9].*.csv$')
+nfiles= length(files)
+d = list()
+for ( i in files) {
+#  cat(paste("Procesando ",i,".\n",sep=""))
+  d[[i]]  = read.csv2(file=i,sep=",",dec=".",header=TRUE,
+                      stringsAsFactors = FALSE)
+}
+```
+
+## Comprensión de la Estructura de los Datos
+
+Analizamos los rangos disponibles:
+
+```{r understanding, warning=FALSE}
+#
+setwd('~/git/Salas')
+if (file.exists("MatDat.RData")) {
+  load(file="MatDat.RData")
+}
+if (! exists("matdat") ) {
+  for (i in ls(d)) {
+    if ( ! exists("dd")) {
+      dd=unique(as.Date(d[[i]][,1]))
+    }
+    dd = cbind(dd,unique(as.Date(d[[i]][,1])))
+  }
+  dd = as.Date(unique(sort(dd)))
+  matdat = data.frame(fecha=dd)
+}
+if (ncol(matdat) < (2*length(ls(d))+1)) {
+  for (i in ls(d)) {
+    matdat[,(ncol(matdat)+1):(ncol(matdat)+2)] =   
+        ldply(dd,function(x,d){return(range(which(as.Date(d)==x)))},
+              d[[i]][,1])
+    cols = paste(i,c("-s","-e"),sep="")  
+    colnames(matdat)[(ncol(matdat)-1):ncol(matdat)] = cols
+  }
+  save(matdat,dd,file="MatDat.RData")
+}
+#
+```
+
+El objeto matdat incluye para cada fecha los registros de comienzo y 
+fin para cada día. Es decir, el índice de la lista matdat está indizada
+por fecha.
+
+Preparamos la visualización por días según interesa
+
+```{r daydat, warning=FALSE}
+# 
+# función en la que dada una fecha x se procesa la lista de 
+# de elementos d (d) por sala según la lista m (matdat)
+#
+procesa = function(x,d,m){
+  cols = ls(d)
+  rowj = which(m[,1]==x)
+  i= 1
+  ini  = cols[i]
+  if ( ! is.infinite(as.numeric(m[rowj,paste(ini,"-s",sep="")]))) {
+    d0   = d[[ini]][m[rowj,paste(ini,"-s",sep="")]:
+                      m[rowj,paste(ini,"-e",sep="")],]
+    colnames(d0) = c("X",paste(colnames(d0)[-1],"-",ini,sep=""))
+  }
+  while (length(cols) > 1 && i < length(cols)) {
+    i = i + 1
+    ini = cols[i]
+    if ( ! is.infinite(as.numeric(m[rowj,paste(ini,"-s",sep="")]))) {
+      d1 = d[[ini]][m[rowj,paste(ini,"-s",sep="")]:
+                      m[rowj,paste(ini,"-e",sep="")],]
+      colnames(d1) = c("X",paste(colnames(d1)[-1],"-",ini,sep=""))
+      d0 = merge(d0,d1,by="X")
+    }
+  }
+  return(d0)
+}
+ldat = lapply(dd,procesa,d,matdat)
+names(ldat)=dd
+fechas=dd
+#
+setwd('~/git/Salas')
+save(matdat,ldat,fechas,file="Datos.RData")
+#
+```
+
+El objeto LDAT es una lista indexada por fecha con los datos concretos 
+de cada sala y sensor.
+
+
+## Visualización de las variables por días y espacios
+
+Ahora vamos a pintar algunos gráficos, basándose en la fecha
+para poder analizar la estructura de los datos:
+
+```{r dayplot, warning=FALSE}
+#
+pgplt = function(dat,fechas,ID,vsen,ylb,numt,spt) {
+  ddt = dat[[as.character(fechas[ID])]]
+  colnames(ddt)[1]="Date"
+  mdf = melt(ddt, id.vars="Date", value.name="value") 
+  mdf[,"Sensor"]= apply(mdf[,c("Date","variable")],1,                        function(x){return(strsplit(x[2],"-")[[1]][1])})
+  mdf[,"Sala"] = apply(mdf[,c("Date","variable")],1,
+                       function(x){return(sub(".csv","",
+                           strsplit(x[2],"-")[[1]][3]))})
+  #
+  mdf = mdf[mdf$Sensor == vsen,]
+  # mdf = mdf[mdf$Sensor=="CO2" & 
+  #       mdf$Sala %in% c("Comedor","Habitacion 1"),]
+  # mdf[mdf$Sala=="Comedor","value"] = 
+  #       mdf[mdf$Sala=="Comedor","value"] +500
+  mdf[,"Tiempo"]= substr(mdf[,"Date"],12,100)
+  mdf[,"Date"] = as.numeric(as.POSIXct(mdf[,"Date"],
+                      format="%Y-%m-%d %H:%M:%S"))
+  lbs          = (trans_breaks(identity,identity,n=numt)
+                             (range(mdf[,"Date"])))
+  tlbs         = substr(as.POSIXct(as.numeric(lbs),
+                          origin="1970-01-01 00:00:00"),9,16)
+  p            = (ggplot(data=mdf,
+                   aes(x=Date, y=value, group= Sala, colour = Sala)) +
+                   geom_line() +  theme(axis.text.x = 
+                            element_text(angle = 90,hjust = 1)) +
+                   scale_x_continuous(paste("Date: ",dd[ID],
+                                    "->",weekdays(dd[ID]),sep="") 
+                           , breaks = lbs, labels = tlbs) +
+                   scale_y_continuous(eval(parse(text=expression(ylb))))+
+                   geom_point( size=spt, shape=21, fill="white"))
+#  return(ggplotly(p))
+  return(p)
+}
+#
+vsen= c("CO2","Temperature","Humidity")
+unts= c("CO[2] {ppm}","T {K}","RH {%}")
+numt= 8
+spt = 1.25
+#
+matd = data.frame(ID=1:length(dd),Date=dd,WeekDay=weekdays(dd),
+                  Sensor=vsen[1], Unit=unts[1])
+#
+for (j in 2:length(vsen)) {
+  matd = rbind(matd,data.frame(ID=1:length(dd),Date=dd,
+                    WeekDay=weekdays(dd),Sensor=vsen[j],
+                               Unit=unts[j]))
+}
+
+fechas = matd[,"Date"]
+matd[,"Sensor"] = as.character(matd[,"Sensor"])
+matd[,"Unit"] = as.character(matd[,"Unit"])
+#
+setwd('~/git/Salas')
+for (ir in 1:nrow(matd)) {
+  idd = matd[ir,"ID"]
+  fec = matd[ir,"Date"]
+  sns = as.character(matd[ir,"Sensor"])
+  unt = as.character(matd[ir,"Unit"])
+#  fn  = paste("/home/tecnalia/git/P01/imgs/",fec,"_",sns,
+#  ".html",sep="")
+  fn  = paste("/home/tecnalia/git/P01/imgs/",fec,"_",sns,
+              ".svg",sep="")
+  if ( ! file.exists(fn)) {
+    p = pgplt(ldat,fechas,idd,sns,unt,numt,spt)
+#    htmlwidgets::saveWidget(ggiraph(code={print(p)}), fn)
+    ggsave(file=fn,plot=p,width=10,height=8)
+  }
+#  en  = paste("imgs/",fec,"_",sns,".html",sep="")
+  en  = paste("imgs/",fec,"_",sns,".svg",sep="")  
+  matd[ir,"panel"]=paste("http://138.100.82.181/~tecnalia/Salas_",
+                         en,sep="")
+}
+#
+pg <- matd %>% mutate(img = img_panel(panel)) %>%
+  trelliscope(name = "Sensores_Salas",nrow=3,ncol=3,
+                   width=800, height=800,self_contained = FALSE,
+                  state=list(labels=c("Date","Sensor")))
+htmlwidgets::saveWidget(pg,"/home/tecnalia/git/Salas/Ambiente.html")
+pg
+#
+```
+
+El objeto widget pg es presentado para poder interactuar.
+
+## Aprendizaje de ocupación
+
+Resulta difícil a la vista de las observaciones por ejemplo de CO2 del
+día 2015-11-09 (lunes). También el 2015-11-10 con respecto a 
+la habitación 1.
+
+Por tanto implantar reglas del tipo entre las 09:00 a las 21:00 => Día
+21:00 a las 09:00 => Noche. Van a crear muchos problemas de 
+consistencia. Crear un modelo que aprenda de esos valores no ayudará.
+
+Es preciso contemplar alternativas. Vamos a estudiar el comportamiento horario por sala para ver las distribuciones y tratar de encontrar la
+rutina, es decir,seguimos con el análisis exploratiro de datos (EDA). 
+
+## Evaluación horaria por sala y mes
+
+
+```{r dayprep, warning=FALSE}
+#
+extrae_hora = function(listax,hora,lugar) {
+  desde = str_split(hora,"-")[[1]][1]
+  hasta = str_split(hora,"-")[[1]][2]
+  desde = paste(desde,":00",sep="")
+  desde = paste(strftime(listax$X[1],"%Y-%m-%d")," ",desde,sep="")
+  hasta = paste(strftime(listax$X[1],"%Y-%m-%d")," ",hasta,sep="")
+  desde = as.POSIXct(desde)
+  hasta = as.POSIXct(hasta)
+  rd    = listax[(listax$X >= desde & listax$X <=hasta),]
+  clss  = grep(lugar,colnames(rd))
+  rd    = rd[,clss]
+  clss  = colnames(rd)
+  colnames(rd) = unlist(lapply(str_split(colnames(rd),"-"),
+                               function(x){return(x[1])}))
+  return(rd)
+}
+#
+if ( exists("lval") ) { 
+  rm(lval)
+}
+salas = c("Comedor","Habitacion 1","Habitacion 2",
+          "Sala Central","Sala de Estar")
+for (sala in salas) {
+  dp = data.frame(month=1:12,sala=sala,panel=NA)
+  for (i in 1:12) { # Para cada mes por separado
+    setwd('~/git/P01/')
+    fig = paste("imgs/month-",sprintf("%02d",i),"-",
+                sala,".png",sep="")
+    nldat = ldat[ls(ldat) %in% as.character(dd[month(dd)==i])]
+    for (h in paste(sprintf("%02d:00",0:23),
+                sprintf("%02d:59",0:23),sep="-")) { # para cada hora
+      if ( ! exists("lval")) {
+        lval  = cbind(ldply(nldat,extrae_hora,h,sala),h)
+      } else {
+        lval = rbind(lval,cbind(ldply(nldat,extrae_hora,
+                                      h,sala),h))  
+      }
+    }
+# 
+    if (! file.exists(fig)) {      
+      lval$h = as.factor(lval$h)
+      p1 = ggplot(lval,aes(x=h,y=Temperature)) + 
+        geom_boxplot(outlier.shape=16, outlier.size=2, 
+                     notch=FALSE) +
+        scale_y_continuous(limits=c(15,30), breaks=seq(15,30,5)) +
+        theme(axis.text.x = element_text(angle = 90,hjust = 1))  
+      p2 = ggplot(lval,aes(x=h,y=CO2)) + 
+        geom_boxplot(outlier.shape=16, outlier.size=2, 
+                     notch=FALSE) +
+        scale_y_continuous(limits=c(300,1800),
+                           breaks=seq(300,1800,100)) +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+        xlab(paste("Mes",i,sep=":"))
+      p3 = ggplot(lval,aes(x=h,y=Humidity)) + 
+        geom_boxplot(outlier.shape=16, outlier.size=2, 
+                     notch=FALSE) +
+        scale_y_continuous(limits=c(30,80), breaks=seq(30,80,10)) +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1))
+#
+      png(fig,width=36,height=10,units="cm",res=1200)
+      grid.arrange(p1,p2,p3,ncol=3,nrow=1)
+      dev.off()
+      rm(lval)
+    }
+    dp[i,"panel"]=paste(
+              "http://138.100.82.181/~tecnalia/Salas_imgs/month-",
+                  sprintf("%02d",i),"-",sala,".png",sep="")
+  }
+  if (! exists("dpt")) {
+    dpt = dp
+  } else {
+    dpt = rbind(dpt,dp)
+  }
+}
+#
+pg2 <- dpt %>% mutate(img = img_panel(panel)) %>%
+  trelliscope(name = "Salas-Horas",nrow=2,ncol=1,
+                   width=900, height=300,self_contained = TRUE,
+                  state=list(labels=c("month","sala")))
+htmlwidgets::saveWidget(pg2,"/home/tecnalia/git/Salas/Horas.html")
+pg2
+```
+
+A la vista de la dispersión de resultados no parece haber un 
+paradigma claro de comportamiento.
+
+## Proyección 2D de datos mensuales
+Vamos a recuperar los datos 
+
+
+```{r dayproy, warning=FALSE}
+#
+rm(dpt,lval)
+setwd('~/git/P01/')
+for (sala in salas) {
+  dp = data.frame(month=1:12,sala=sala,panel=NA)
+  for (i in 1:12) { # Para cada mes por separado
+    nldat = ldat[ls(ldat) %in% as.character(dd[month(dd)==i])]
+    for (h in paste(sprintf("%02d:00",0:23),
+              sprintf("%02d:59",0:23),sep="-")) { # para cada hora
+      if ( ! exists("lval")) {
+        lval  = cbind(ldply(nldat,extrae_hora,h,sala),h)
+      } else {
+        lval = rbind(lval,cbind(ldply(nldat,extrae_hora,h,sala),h))  
+      }
+    }
+    lval = lval[! is.na(lval$Temperature),]
+    ir.pca = prcomp(lval[,-c(1,5)],center=TRUE,scale=TRUE)
+    g = ggbiplot(ir.pca, obs.scale = 1, var.scale = 1, 
+          groups = as.factor(lval$h), 
+                    ellipse = TRUE, circle = TRUE) +
+          scale_color_discrete(name = '') + 
+          theme(legend.direction ='horizontal',legend.position='top')
+#
+    fig = paste("imgs/pca-month-",sprintf("%02d",i),"-",
+                sala,".png",sep="")
+    if (! file.exists(fig)) {
+      png(fig,width=15,height=15,units="cm",res=1200)
+      print(g)
+      dev.off()      
+    }
+    dp[i,"panel"]=paste(
+              "http://138.100.82.181/~tecnalia/P01_imgs/month-",
+                  sprintf("%02d",i),"-",sala,".png",sep="")
+  }
+  if (! exists("dpt")) {
+    dpt = dp
+  } else {
+    dpt = rbind(dpt,dp)
+  }
+}
+#
+pg3 <- dpt %>% mutate(img = img_panel(panel)) %>%
+  trelliscope(name = "PCA-Salas",nrow=1,ncol=1,
+                   width=600, height=600,self_contained = FALSE,
+                  state=list(labels=c("month","sala")))
+htmlwidgets::saveWidget(pg3,"/home/tecnalia/git/P01/PCAs.html")
+pg3
+```
+  
+## Carga de datos filtrados
+```{r cargafiltrado,warning=FALSE}
+#
+setwd('~/git/P01')
+load("LdatFilt.RData")
+#
+filtmin=function(x,variable,lim){
+  y = x
+  lc = grep(variable,names(x))
+  if ( length(lc) > 0) {
+    mc=apply(x[,lc],2,min,na.rm=TRUE)
+    jj=which(mc < lim)
+    for ( j in lc[jj]) {
+      idx = which(x[,j] < lim)
+        y=x[-idx,]
+    }
+  }
+  return(y)
+}
+#
+ldat3 = ldat
+ldat  = lapply(ldat,filtmin,"Humidity.*",10)
+dd    = names(ldat)
+save(dd,ldat,file="LdatFilt.RData")
+#
+rm(lval)
+for (sala in salas) {
+  for (i in 1:12) { # Para cada mes por separado
+    nldat = ldat[ls(ldat) %in% as.character(dd[month(dd)==i])]
+    for (h in paste(sprintf("%02d:00",0:23),
+              sprintf("%02d:59",0:23),sep="-")) { # para cada hora
+      if ( ! exists("lval")) {
+        lval  = cbind(ldply(nldat,extrae_hora,h,sala),h)
+      } else {
+        lval = rbind(lval,cbind(ldply(nldat,extrae_hora,h,sala),h))  
+      }
+    }
+    lval = lval[! is.na(lval$Temperature),]
+  }
+}
+```
+  
+## Vista general de relaciones por pares
+
+Buscamos la relación por pares entre variables que ayuden a comprender 
+potenciales dependencias entre los datos
+
+```{r pairsplot, warning=FALSE}
+#
+panel.hist <- function(x, ...)
+{
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(usr[1:2], 0, 1.5) )
+    h <- hist(x, plot = FALSE)
+    breaks <- h$breaks; nB <- length(breaks)
+    y <- h$counts; y <- y/max(y)
+    rect(breaks[-nB], 0, breaks[-1], y, col="cyan", ...)
+}
+## put (absolute) correlations on the upper panels,
+## with size proportional to the correlations.
+panel.cor <- function(x, y, digits=2, prefix="", cex.cor, ...)
+{
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    r <- abs(cor(x, y))
+    txt <- format(c(r, 0.123456789), digits=digits)[1]
+    txt <- paste(prefix, txt, sep="")
+    if(missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)
+    text(0.5, 0.5, txt, cex = cex.cor * r)
+}
+ldd = lval[,2:4]
+pdf(file="pairs.pdf",width=1000,height=1000)
+pairs(ldd,upper.panel=panel.cor,diag.panel=panel.hist)
+dev.off()
+#
+```
+  
