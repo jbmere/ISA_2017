@@ -211,9 +211,9 @@ for (ir in 1:nrow(matd)) {
   fec = matd[ir,"Date"]
   sns = as.character(matd[ir,"Sensor"])
   unt = as.character(matd[ir,"Unit"])
-#  fn  = paste("/home/tecnalia/git/P01/imgs/",fec,"_",sns,
+#  fn  = paste("/home/jb/git/Salas/imgs/",fec,"_",sns,
 #  ".html",sep="")
-  fn  = paste("/home/tecnalia/git/P01/imgs/",fec,"_",sns,
+  fn  = paste("/home/jb/git/Salas/imgs/",fec,"_",sns,
               ".svg",sep="")
   if ( ! file.exists(fn)) {
     p = pgplt(ldat,fechas,idd,sns,unt,numt,spt)
@@ -222,7 +222,7 @@ for (ir in 1:nrow(matd)) {
   }
 #  en  = paste("imgs/",fec,"_",sns,".html",sep="")
   en  = paste("imgs/",fec,"_",sns,".svg",sep="")  
-  matd[ir,"panel"]=paste("http://138.100.82.181/~tecnalia/Salas_",
+  matd[ir,"panel"]=paste("http://138.100.82.181/~jb/Salas_",
                          en,sep="")
 }
 #
@@ -230,7 +230,7 @@ pg <- matd %>% mutate(img = img_panel(panel)) %>%
   trelliscope(name = "Sensores_Salas",nrow=3,ncol=3,
                    width=800, height=800,self_contained = FALSE,
                   state=list(labels=c("Date","Sensor")))
-htmlwidgets::saveWidget(pg,"/home/tecnalia/git/Salas/Ambiente.html")
+htmlwidgets::saveWidget(pg,"/home/jb/git/Salas/Ambiente.html")
 pg
 #
 ```
@@ -280,7 +280,7 @@ salas = c("Comedor","Habitacion 1","Habitacion 2",
 for (sala in salas) {
   dp = data.frame(month=1:12,sala=sala,panel=NA)
   for (i in 1:12) { # Para cada mes por separado
-    setwd('~/git/P01/')
+    setwd('~/git/Salas/')
     fig = paste("imgs/month-",sprintf("%02d",i),"-",
                 sala,".png",sep="")
     nldat = ldat[ls(ldat) %in% as.character(dd[month(dd)==i])]
@@ -320,7 +320,7 @@ for (sala in salas) {
       rm(lval)
     }
     dp[i,"panel"]=paste(
-              "http://138.100.82.181/~tecnalia/Salas_imgs/month-",
+              "http://138.100.82.181/~jb/Salas_imgs/month-",
                   sprintf("%02d",i),"-",sala,".png",sep="")
   }
   if (! exists("dpt")) {
@@ -332,9 +332,9 @@ for (sala in salas) {
 #
 pg2 <- dpt %>% mutate(img = img_panel(panel)) %>%
   trelliscope(name = "Salas-Horas",nrow=2,ncol=1,
-                   width=900, height=300,self_contained = TRUE,
+                   width=900, height=300,self_contained = FALSE,
                   state=list(labels=c("month","sala")))
-htmlwidgets::saveWidget(pg2,"/home/tecnalia/git/Salas/Horas.html")
+htmlwidgets::saveWidget(pg2,"/home/jb/git/Salas/Horas.html")
 pg2
 ```
 
@@ -348,7 +348,7 @@ Vamos a recuperar los datos
 ```{r dayproy, warning=FALSE}
 #
 rm(dpt,lval)
-setwd('~/git/P01/')
+setwd('~/git/Salas/')
 for (sala in salas) {
   dp = data.frame(month=1:12,sala=sala,panel=NA)
   for (i in 1:12) { # Para cada mes por separado
@@ -362,22 +362,22 @@ for (sala in salas) {
       }
     }
     lval = lval[! is.na(lval$Temperature),]
-    ir.pca = prcomp(lval[,-c(1,5)],center=TRUE,scale=TRUE)
-    g = ggbiplot(ir.pca, obs.scale = 1, var.scale = 1, 
-          groups = as.factor(lval$h), 
-                    ellipse = TRUE, circle = TRUE) +
-          scale_color_discrete(name = '') + 
-          theme(legend.direction ='horizontal',legend.position='top')
-#
     fig = paste("imgs/pca-month-",sprintf("%02d",i),"-",
-                sala,".png",sep="")
-    if (! file.exists(fig)) {
+                  sala,".png",sep="")    
+    if (! file.exists(fig)) {    
+      ir.pca = prcomp(lval[,-c(1,5)],center=TRUE,scale=TRUE)
+      g = ggbiplot(ir.pca, obs.scale = 1, var.scale = 1, 
+            groups = as.factor(lval$h), 
+                      ellipse = TRUE, circle = TRUE) +
+            scale_color_discrete(name = '') + 
+            theme(legend.direction ='horizontal',legend.position='top')
+#
       png(fig,width=15,height=15,units="cm",res=1200)
       print(g)
       dev.off()      
     }
     dp[i,"panel"]=paste(
-              "http://138.100.82.181/~tecnalia/P01_imgs/month-",
+              "http://138.100.82.181/~jb/Salas_imgs/pca-month-",
                   sprintf("%02d",i),"-",sala,".png",sep="")
   }
   if (! exists("dpt")) {
@@ -391,14 +391,14 @@ pg3 <- dpt %>% mutate(img = img_panel(panel)) %>%
   trelliscope(name = "PCA-Salas",nrow=1,ncol=1,
                    width=600, height=600,self_contained = FALSE,
                   state=list(labels=c("month","sala")))
-htmlwidgets::saveWidget(pg3,"/home/tecnalia/git/P01/PCAs.html")
+htmlwidgets::saveWidget(pg3,"/home/jb/git/Salas/PCAs.html")
 pg3
 ```
   
 ## Carga de datos filtrados
 ```{r cargafiltrado,warning=FALSE}
 #
-setwd('~/git/P01')
+setwd('~/git/Salas')
 load("LdatFilt.RData")
 #
 filtmin=function(x,variable,lim){
@@ -416,7 +416,7 @@ filtmin=function(x,variable,lim){
 }
 #
 ldat3 = ldat
-ldat  = lapply(ldat,filtmin,"Humidity.*",10)
+ldat  = lapply(ldat,filtmin,"Humidity.*",15)
 dd    = names(ldat)
 save(dd,ldat,file="LdatFilt.RData")
 #
